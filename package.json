@@ -1,0 +1,33 @@
+{
+  "name": "crisp-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Crisp customer support platform",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "crisp-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "crisp",
+    "support",
+    "chat"
+  ],
+  "license": "MIT"
+}
