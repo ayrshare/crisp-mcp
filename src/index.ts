@@ -759,6 +759,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (a.nickname) meta.nickname = a.nickname;
         if (a.subject) meta.subject = a.subject;
         if (a.segments) meta.segments = a.segments;
+        if (Object.keys(meta).length === 0) {
+          throw new Error(
+            "At least one of email, nickname, subject, or segments is required",
+          );
+        }
         await crispClient.updateConversationMeta(sessionId, meta);
         return jsonResult({ success: true, updated: meta });
       }
@@ -766,8 +771,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "add_segments": {
         const sessionId = a.session_id as string;
         const segments = a.segments as string[];
-        if (!sessionId || !segments) {
-          throw new Error("session_id and segments are required");
+        if (!sessionId || !Array.isArray(segments) || segments.length === 0) {
+          throw new Error("session_id and a non-empty segments array are required");
         }
         await crispClient.addSegments(sessionId, segments);
         return jsonResult({ success: true, added: segments });
@@ -776,8 +781,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "remove_segments": {
         const sessionId = a.session_id as string;
         const segments = a.segments as string[];
-        if (!sessionId || !segments) {
-          throw new Error("session_id and segments are required");
+        if (!sessionId || !Array.isArray(segments) || segments.length === 0) {
+          throw new Error("session_id and a non-empty segments array are required");
         }
         await crispClient.removeSegments(sessionId, segments);
         return jsonResult({ success: true, removed: segments });
