@@ -59,8 +59,12 @@ Back in the Marketplace plugin settings, you need to enable the required scopes:
    - `website:conversation:states` - Change conversation states
    - `website:conversation:routing` - Assign conversations
    - `website:conversation:metas` - Read/write metadata
+   - `website:conversation:actions` - Block/unblock conversations
    - `website:operators:list` - List team members
    - `website:visitors:list` - List visitors
+   - `website:people:profiles` - Look up People profiles by email or ID
+   - `website:people:conversations` - List a person's conversation history
+   - `website:people:data` - Read a person's custom data dictionary
 
 3. Click **"Save"**
 

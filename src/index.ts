@@ -63,7 +63,7 @@ const tools: Tool[] = [
   {
     name: "list_conversations",
     description:
-      "List conversations with optional filters. Returns `{ data, pageNumber, hasMore, nextPage }` so callers know whether to fetch more. Filters are OR-combined with the standard search.",
+      "List conversations with optional filters. Returns `{ conversations, page_number, has_more, next_page }` so callers know whether to fetch more. Filters are OR-combined with the standard search.",
     inputSchema: {
       type: "object",
       properties: {
