@@ -32,6 +32,9 @@ export interface CrispConfig {
   maxRetries?: number;
   /** Base delay in ms before the first retry (doubles each attempt). */
   retryBaseDelayMs?: number;
+  /** Per-request timeout in ms. Default 30s. Aborted requests are retried
+   *  under the same budget as 429/5xx. */
+  requestTimeoutMs?: number;
 }
 
 // ============================================
@@ -315,6 +318,7 @@ export class CrispClient {
   private baseUrl = "https://api.crisp.chat/v1";
   private maxRetries: number;
   private retryBaseDelayMs: number;
+  private requestTimeoutMs: number;
 
   constructor(config: CrispConfig) {
     this.identifier = config.identifier;
@@ -322,6 +326,7 @@ export class CrispClient {
     this.websiteId = config.websiteId;
     this.maxRetries = config.maxRetries ?? 4;
     this.retryBaseDelayMs = config.retryBaseDelayMs ?? 500;
+    this.requestTimeoutMs = config.requestTimeoutMs ?? 30_000;
   }
 
   getWebsiteId(): string {
@@ -362,15 +367,41 @@ export class CrispClient {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      const response = await fetch(url, {
-        method,
-        headers: {
-          Authorization: this.getAuthHeader(),
-          "Content-Type": "application/json",
-          "X-Crisp-Tier": "plugin",
-        },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers: {
+            Authorization: this.getAuthHeader(),
+            "Content-Type": "application/json",
+            "X-Crisp-Tier": "plugin",
+          },
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timer);
+        // Treat AbortError (timeout) as retryable — same tier as 429/5xx.
+        // Network-layer errors (DNS, connection reset) are also retried
+        // since they're transient by nature.
+        const err =
+          fetchErr instanceof Error
+            ? fetchErr
+            : new Error(String(fetchErr));
+        lastError = err;
+        const isTimeout = err.name === "AbortError";
+        (err as any).status = isTimeout ? "timeout" : "network";
+        if (attempt >= this.maxRetries) throw err;
+        const delay =
+          this.retryBaseDelayMs * Math.pow(2, attempt) +
+          Math.floor(Math.random() * 250);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      clearTimeout(timer);
 
       if (response.ok) {
         const json = await response.json();
@@ -776,8 +807,11 @@ export class CrispClient {
   async findPersonByEmail(email: string): Promise<PeopleProfile | null> {
     const res = await this.listPeopleProfiles(1, { searchText: email });
     const lower = email.toLowerCase();
-    const exact = res.data.find((p) => p.email?.toLowerCase() === lower);
-    return exact ?? res.data[0] ?? null;
+    // Exact case-insensitive match only. Crisp's search endpoint returns
+    // substring hits, so falling back to the first row can silently surface
+    // a different customer's profile — a data-isolation bug much worse than
+    // returning null.
+    return res.data.find((p) => p.email?.toLowerCase() === lower) ?? null;
   }
 
   /** Get a single People profile by its people_id (UUID). */
@@ -967,7 +1001,17 @@ export class CrispClient {
       ? this.findPersonByEmail(email).catch(() => null)
       : Promise.resolve(null);
 
-    const [messages, person] = await Promise.all([messagesPromise, personPromise]);
+    // Use allSettled so a failure in one arm doesn't collapse the whole
+    // call. Matches the "partial context over total failure" promise in
+    // the docstring above.
+    const [messagesResult, personResult] = await Promise.allSettled([
+      messagesPromise,
+      personPromise,
+    ]);
+    const messages: Message[] =
+      messagesResult.status === "fulfilled" ? messagesResult.value : [];
+    const person: PeopleProfile | null =
+      personResult.status === "fulfilled" ? personResult.value : null;
 
     let personData: Record<string, unknown> | null = null;
     let otherConversations: Conversation[] = [];
