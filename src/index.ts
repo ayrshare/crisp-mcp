@@ -6,14 +6,16 @@
  * An MCP server that provides tools for interacting with the Crisp
  * customer support platform. See README.md for tool-by-tool docs.
  *
- * This revision (v1.1.0) adds five major capability areas on top of the
- * original tool set:
+ * This revision (v1.2.0) adds capability areas on top of the original
+ * tool set:
  *   - People / Contacts lookup (find by email, past conversations, profile)
  *   - A "rich context" super-tool that assembles everything Ana needs
  *     about a ticket in one call
  *   - File attachment send (by URL) and better inbound file rendering
  *   - Exponential-backoff retry for 429 + 5xx on every request
  *   - Smart conversation filters (awaiting-reply, assigned-to-me, by segment)
+ *   - Typing indicator, mark-read, conversation URL builder, resolve/reopen
+ *     aliases, and find-conversations-for-email chain (v1.2)
  *
  * See crisp-client.ts for the underlying HTTP client; this file only wires
  * up the MCP tool schemas and dispatches calls.
