@@ -344,15 +344,19 @@ export class CrispClient {
    *
    * Retries ONLY on status codes that are safe to retry for idempotent
    * methods AND for Crisp's POST endpoints (message send is idempotent on
-   * their side via fingerprinting). If that ever changes we'll need a
-   * per-method opt-out flag.
+   * their side via fingerprinting). Callers that aren't replay-safe (e.g.
+   * DELETE, where a retry after a lost success response would surface a
+   * spurious 404) pass `replaySafe: false` to opt out of the retry loop
+   * entirely — both on HTTP errors and on network/timeout errors.
    */
   private async request<T>(
     method: string,
     path: string,
     body?: unknown,
     query?: Record<string, string | number | boolean | undefined>,
+    opts: { replaySafe?: boolean } = {},
   ): Promise<T> {
+    const replaySafe = opts.replaySafe ?? true;
     let url = `${this.baseUrl}${path}`;
     if (query) {
       const params = new URLSearchParams();
@@ -394,7 +398,7 @@ export class CrispClient {
         lastError = err;
         const isTimeout = err.name === "AbortError";
         (err as any).status = isTimeout ? "timeout" : "network";
-        if (attempt >= this.maxRetries) throw err;
+        if (!replaySafe || attempt >= this.maxRetries) throw err;
         const delay =
           this.retryBaseDelayMs * Math.pow(2, attempt) +
           Math.floor(Math.random() * 250);
@@ -417,8 +421,11 @@ export class CrispClient {
       lastError = err;
 
       // Retry on 429 (rate limit) and 5xx (server errors). 4xx other than
-      // 429 are client bugs — retrying won't help, fail fast.
+      // 429 are client bugs — retrying won't help, fail fast. Non-replay-
+      // safe methods (DELETE) never retry on HTTP errors either; a lost
+      // success response would otherwise resurface as a spurious 404.
       const shouldRetry =
+        replaySafe &&
         (response.status === 429 || response.status >= 500) &&
         attempt < this.maxRetries;
       if (!shouldRetry) throw err;
@@ -685,9 +692,14 @@ export class CrispClient {
   }
 
   async deleteConversation(sessionId: string): Promise<void> {
+    // DELETE is not replay-safe: a retry after a lost success response
+    // would hit 404 and surface as a spurious failure. Opt out of retries.
     await this.request<unknown>(
       "DELETE",
       `/website/${this.websiteId}/conversation/${sessionId}`,
+      undefined,
+      undefined,
+      { replaySafe: false },
     );
   }
 
@@ -805,13 +817,22 @@ export class CrispClient {
    * a different address).
    */
   async findPersonByEmail(email: string): Promise<PeopleProfile | null> {
-    const res = await this.listPeopleProfiles(1, { searchText: email });
     const lower = email.toLowerCase();
-    // Exact case-insensitive match only. Crisp's search endpoint returns
-    // substring hits, so falling back to the first row can silently surface
-    // a different customer's profile — a data-isolation bug much worse than
-    // returning null.
-    return res.data.find((p) => p.email?.toLowerCase() === lower) ?? null;
+    // Crisp's search endpoint returns substring hits; the exact match can
+    // sit on a later page if many profiles share the substring (e.g. a
+    // shared domain). Walk pages until we either find the exact match or
+    // run out, capped at MAX_PAGES to keep the call bounded even if Crisp
+    // returns hasMore indefinitely. 5 pages × 20 per page = 100 candidate
+    // profiles, which is plenty for this lookup; callers that need more
+    // should use listPeopleProfiles directly with a narrower searchText.
+    const MAX_PAGES = 5;
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await this.listPeopleProfiles(page, { searchText: email });
+      const exact = res.data.find((p) => p.email?.toLowerCase() === lower);
+      if (exact) return exact;
+      if (!res.hasMore) return null;
+    }
+    return null;
   }
 
   /** Get a single People profile by its people_id (UUID). */
