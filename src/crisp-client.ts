@@ -1037,17 +1037,32 @@ export class CrispClient {
     let personData: Record<string, unknown> | null = null;
     let otherConversations: Conversation[] = [];
     if (person?.people_id) {
+      const max = options.maxOtherConversations ?? 10;
+      // Walk pages until we've collected `max` other conversations or
+      // Crisp runs out. Capped at MAX_PAGES to stay bounded even if
+      // hasMore is spuriously true — same safety posture as
+      // findPersonByEmail. 5 pages × 20 per page is plenty of history
+      // depth for the "rich context" use case.
+      const MAX_PAGES = 5;
+      const peopleId = person.people_id;
       const [dataResult, convsResult] = await Promise.allSettled([
-        this.getPersonData(person.people_id),
-        this.getPersonConversations(person.people_id, 1),
+        this.getPersonData(peopleId),
+        (async () => {
+          const collected: Conversation[] = [];
+          for (let page = 1; page <= MAX_PAGES; page++) {
+            const res = await this.getPersonConversations(peopleId, page);
+            for (const c of res.data) {
+              if (c.session_id === sessionId) continue;
+              collected.push(c);
+              if (collected.length >= max) return collected;
+            }
+            if (!res.hasMore) break;
+          }
+          return collected;
+        })(),
       ]);
       if (dataResult.status === "fulfilled") personData = dataResult.value;
-      if (convsResult.status === "fulfilled") {
-        const max = options.maxOtherConversations ?? 10;
-        otherConversations = convsResult.value.data
-          .filter((c) => c.session_id !== sessionId)
-          .slice(0, max);
-      }
+      if (convsResult.status === "fulfilled") otherConversations = convsResult.value;
     }
 
     return { conversation, messages, person, personData, otherConversations };
